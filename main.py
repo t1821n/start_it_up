@@ -1,3 +1,4 @@
+import llm
 import pydantic
 from dotenv import load_dotenv
 from typing import Annotated, List
@@ -8,7 +9,16 @@ from langgraph.graph.message import add_messages
 from langchain.chat_models import  init_chat_model
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
-from web_operations import serp_search
+from web_operations import serp_search, reddit_search_api, reddit_posts_retrieval
+from prompts import (
+    get_reddit_url_analysis_messages,
+    get_google_analysis_messages,
+    get_bing_analysis_messages,
+    get_synthesis_messages,
+    get_reddit_analysis_messages,
+    # create_message_pair
+    )
+
 
 
 load_dotenv()
@@ -27,6 +37,10 @@ class State(TypedDict):
     bing_analysis: str | None
     reddit_analysis: str | None
     final_ans: str | None
+
+
+class RedditUrlAnalysis(BaseModel):
+    selected_urls: List[str] = Field(description="list of reddit urls that contain valuable information for answering user's question")
 
 
 def google_search(state: State):
@@ -54,17 +68,57 @@ def reddit_search(state: State):
     user_ques = state.get("user_ques", "")
     print(f"searching for reddit:{user_ques}")
 
-    reddit_res = []
+    reddit_res = reddit_search_api(user_ques)
+    print(reddit_res)
 
     return {"reddit_res": reddit_res}
 
 
 def analyse_reddit_posts(state: State):
-    return {"analyse_reddit_res": []}
+    user_ques = state.get("user_ques", "")
+    reddit_res = state.get("reddit_res", "")
+
+    if not reddit_res:
+        return {"analyse_reddit_res": []}
+
+    structured_llm = llm.with_structured_output(RedditUrlAnalysis)
+    messages = get_reddit_url_analysis_messages(user_ques, reddit_res)
+
+    try:
+        analysis = structured_llm.invoke(messages)
+        selected_urls = analysis.selected_urls
+
+        print("selected urls:")
+        for i, url in enumerate(selected_urls, 1):
+            print(f"{i}.{url}")
+
+    except Exception as e:
+        print(e)
+        selected_urls = []
+
+    return {"selected_reddit_urls": selected_urls}
 
 
 def retrieve_reddit_posts(state: State):
-    return {"retrieve_reddit_posts": []}
+    print("getting reddit posts comments")
+
+    selected_urls =  state.get("selected_reddit_urls", [])
+
+    if not selected_urls:
+        return {"retrieve_reddit_posts": []}
+
+    print(f"processing {len(selected_urls)} reddit urls")
+
+    reddit_post_data = reddit_posts_retrieval(selected_urls)
+
+    if reddit_post_data:
+        print(f"successfully got {len(reddit_post_data)} posts")
+    else:
+        print("failed to get posts")
+        reddit_post_data = []
+
+    print(reddit_post_data)
+    return {"reddit_post_data": reddit_post_data}
 
 
 def analyse_google_res(state: State):

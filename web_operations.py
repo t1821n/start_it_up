@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 import os
 import requests
 from urllib.parse import quote_plus
+from snapshot_operations import poll_snapshot_status, download_snapshot
 
 load_dotenv()
 
@@ -45,9 +46,7 @@ def serp_search(query, engine="google"):
     else:
         raise ValueError(f"Unknown search engine: {engine}")
 
-    #send req to brightdata
     url = "https://api.brightdata.com/request"
-
 
     payload = {
         "zone": "ai_agent",
@@ -68,15 +67,31 @@ def serp_search(query, engine="google"):
     return extracted_data
 
 
-def _trigger_and_download_snapshot(trigger_url, params):
+def _trigger_and_download_snapshot(trigger_url, params, data, operation_name="operation"):
+    trigger_res = _make_api_request(trigger_url, params=params, json=data)
+    if not trigger_res:
+        return None
+
+    snapshot_id = trigger_res.get("snapshot_id")
+    if not snapshot_id:
+        return None
+
+    if not poll_snapshot_status(snapshot_id):
+        return None
+
+    raw_data = download_snapshot(snapshot_id)
+    return raw_data
 
 
 
-def reddit_search(keyword, date="All Time", sort_by="Hot", no_of_posts=75):
-    trigger_url = "https://api.brightdata.com/datasets/v3/trgger"
+def reddit_search_api(  keyword,
+    date="All time",
+    sort_by="Hot",
+    num_of_posts=75):
+    trigger_url = "https://api.brightdata.com/datasets/v3/trigger"
 
     params = {
-        "dataset_id": dataset_id,
+        "dataset_id": "gd_lvz8ah06191smkebj4",
         "include_errors": "true",
         "type": "discover_new",
         "discover_by": "keyword",
@@ -87,13 +102,65 @@ def reddit_search(keyword, date="All Time", sort_by="Hot", no_of_posts=75):
             "keyword": keyword,
             "date": date,
             "sort_by": sort_by,
-            "no_of_posts": no_of_posts,
+            "num_of_posts": num_of_posts,
         }
     ]
 
-    raw_data = None
+    raw_data = _trigger_and_download_snapshot(
+        trigger_url, params, data, operation_name="reddit"
+    )
 
     if not raw_data:
         return None
 
-    return None
+    parsed_data = []
+    for post in raw_data:
+        parsed_post = {
+            "title": post.get("title"),
+            "url": post.get("url")
+        }
+        parsed_data.append(parsed_post)
+
+    return {"parsed_post": parsed_data, "total_found": len(parsed_data)}
+
+
+def reddit_posts_retrieval(urls, days_back=10, load_all_replies=False, comment_limit=""):
+    if not urls:
+        return None
+
+    trigger_url = "https://api.brightdata.com/datasets/v3/trigger"
+
+    params = {
+        dataset_id:"gd_lvz8ah06191smkebj4",
+        "include_errors": "true",
+    }
+
+    data = [
+        {
+        "urls": urls,
+        "days_back": days_back,
+        "load_all_replies": load_all_replies,
+        "comment_limit": comment_limit,
+        }
+        for url in urls
+    ]
+
+    raw_data = _trigger_and_download_snapshot(
+        trigger_url, params, data, operation_name="reddit comments"
+    )
+
+    if not raw_data:
+        return None
+
+    parsed_comments = []
+    for comments in raw_data:
+        parsed_comments = {
+            "comment_id": comments.get("comment_id"),
+            "content": comments.get("comment"),
+            "date": comments.get("date_posted")
+        }
+        parsed_comments.append(parsed_comments)
+
+    return {"parsed_comments": parsed_comments, "total_found": len(parsed_comments)}
+
+
